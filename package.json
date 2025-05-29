@@ -10,8 +10,11 @@
     "test": "jest"
   },
   "dependencies": {
+    "@react-native-async-storage/async-storage": "^2.1.2",
     "react": "19.0.0",
-    "react-native": "0.79.2"
+    "react-native": "0.79.2",
+    "react-native-ble-manager": "^12.1.5",
+    "react-native-permissions": "^5.4.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
