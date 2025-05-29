@@ -21,8 +21,6 @@ import TimeManager from '../services/TimeManager';
 const BleManagerModule = NativeModules.BleManager;
 const bleManagerEmitter = new NativeEventEmitter(BleManagerModule);
 
-const CONNECTION_CHECK_INTERVAL = 10000; // 10 saniye
-
 const HomeScreen: React.FC = () => {
   const [macAddress, setMacAddress] = useState('');
   const [isConnected, setIsConnected] = useState(false);
@@ -284,24 +282,6 @@ const HomeScreen: React.FC = () => {
     checkConnectionStatusRef.current = checkConnectionStatus;
   }, [checkConnectionStatus]);
 
-  // Bağlantı izleme mekanizması başlat
-  const startConnectionMonitoring = useCallback(() => {
-    if (connectionMonitorRef.current) {
-      clearInterval(connectionMonitorRef.current);
-      connectionMonitorRef.current = null;
-    }
-    
-    console.log('🔍 Düzenli bağlantı kontrolü başlatılıyor...');
-    connectionMonitorRef.current = setInterval(() => {
-      console.log('🔍 Düzenli bağlantı kontrolü yapılıyor...');
-      if (checkConnectionStatusRef.current) {
-        checkConnectionStatusRef.current();
-      }
-    }, CONNECTION_CHECK_INTERVAL);
-    
-    console.log('🔍 Düzenli bağlantı kontrolü başlatıldı');
-  }, []);
-
   // Bir sonraki bağlantıyı planla
   const scheduleNextConnection = useCallback(async (deviceMac: string) => {
     try {
@@ -322,30 +302,27 @@ const HomeScreen: React.FC = () => {
         return;
       }
       
-      const currentTime = new Date().getTime();
-      const nextConnectionTime = nextTime.getTime();
-      
-      // Bir sonraki bağlantıya kalan süreyi hesapla
-      const timeUntilNextConnection = nextConnectionTime - currentTime;
-      // Bağlantı denemelerine 10 saniye önce başla
-      const timeToStartRetrying = timeUntilNextConnection - 10000; 
+      // Bağlantı denemesine kadar kalan süreyi hesapla
+      const timeToNextTry = await timeManager.getTimeTillNextTry();
       
       console.log('⏰ ZAMANLAMA BİLGİLERİ:');
       console.log('⏰ Son bağlantı zamanı:', new Date(lastConnectionTime).toLocaleTimeString());
-      console.log('⏰ Şu anki zaman:', new Date(currentTime).toLocaleTimeString());
+      console.log('⏰ Şu anki zaman:', new Date().toLocaleTimeString());
       console.log('⏰ Bir sonraki bağlantı zamanı:', nextTime.toLocaleTimeString());
-      console.log('⏰ Bir sonraki bağlantıya kalan süre (ms):', timeUntilNextConnection);
-      console.log('⏰ Bağlantı denemelerine başlamaya kalan süre (ms):', timeToStartRetrying);
-      console.log('⏰ Bağlantı denemeleri başlangıç saati:', new Date(currentTime + timeToStartRetrying).toLocaleTimeString());
-      console.log('⏰ Son bağlantıdan beri geçen süre (dk):', (currentTime - lastConnectionTime) / 60000);
+      console.log('⏰ Bağlantı denemesine kalan süre (ms):', timeToNextTry);
+      console.log('⏰ Bağlantı denemeleri başlangıç saati:', new Date(Date.now() + timeToNextTry).toLocaleTimeString());
       
-      // Düzenli kontrol mekanizmasını başlat (her 10 saniyede bir kontrol)
-      startConnectionMonitoring();
-      
-      // Eğer bir sonraki bağlantı zamanına kadar süre varsa
-      if (timeToStartRetrying > 0) {
-        console.log(`⏰ ${Math.floor(timeToStartRetrying / 1000)} saniye sonra bağlantı denemeleri başlayacak`);
+      if (timeToNextTry > 0) {
+        // Zamanlayıcıyı tam olarak 5 dakika 50 saniye sonra tetiklenecek şekilde ayarla
+        console.log(`⏰ ${Math.floor(timeToNextTry / 1000)} saniye sonra bağlantı denemeleri başlayacak`);
         console.log(`⏰ Zamanlayıcı kuruluyor: ${new Date().toLocaleTimeString()}`);
+        
+        // Düzenli kontrolü durdur, zamanlayıcı kullan
+        if (connectionMonitorRef.current) {
+          clearInterval(connectionMonitorRef.current);
+          connectionMonitorRef.current = null;
+          console.log('🔍 Düzenli bağlantı kontrolü durduruldu, tam zamanlayıcı kullanılacak');
+        }
         
         // Zamanlayıcıyı ayarla
         intervalRef.current = setTimeout(() => {
@@ -356,25 +333,12 @@ const HomeScreen: React.FC = () => {
           } else {
             console.log('⚠️ startRetryingConnectionRef.current yok!');
           }
-        }, timeToStartRetrying);
+        }, timeToNextTry);
         
         console.log('⏰ Zamanlayıcı kuruldu, interval referansı:', !!intervalRef.current);
-      } else if (timeUntilNextConnection < 0 && Math.abs(timeUntilNextConnection) < 30000) {
-        // Bağlantı zamanı geçmiş ama fazla değil (30 saniyeden az), hemen dene
-        console.log('⏰ Bağlantı zamanı az önce geçmiş, hemen deneniyor');
-        if (startRetryingConnectionRef.current) {
-          startRetryingConnectionRef.current(deviceMac);
-        } else {
-          console.log('⚠️ startRetryingConnectionRef.current yok!');
-        }
-      } else if (timeUntilNextConnection < 0) {
-        // Bağlantı zamanı çok önceden geçmiş, yeni bağlantı zamanını kaydet ve planla
-        console.log('⏰ Bağlantı zamanı çoktan geçmiş, yeni zaman kaydediliyor');
-        await timeManager.saveLastConnectionTime(); // Şu anki zamanı kaydet
-        await scheduleNextConnection(deviceMac); // Yeniden planla
       } else {
-        // Eğer bağlantı zamanı çok yakın, hemen dene
-        console.log('⏰ Bir sonraki bağlantı zamanı çok yakın, hemen deneniyor');
+        // Eğer zaman geçmişse, hemen başlat
+        console.log('⏰ Bağlantı zamanı geçmiş veya hemen başlamalı, bağlantı denemeleri başlatılıyor');
         if (startRetryingConnectionRef.current) {
           startRetryingConnectionRef.current(deviceMac);
         } else {
@@ -384,7 +348,7 @@ const HomeScreen: React.FC = () => {
     } catch (error) {
       console.error('⚠️ Bağlantı planlanırken hata oluştu:', error);
     }
-  }, [startConnectionMonitoring]);
+  }, []);
 
   // scheduleNextConnection fonksiyonunu useRef'e ata
   useEffect(() => {
